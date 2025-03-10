@@ -1,0 +1,6 @@
+.env
+client_secret.json
+token.pickle
+.DS_Store
+.idea/
+output/
