@@ -69,10 +69,22 @@ def get_generic_info(video_ids):
         # Loop through API responses
         if 'items' in response and response['items']:
             for item in response['items']:
+                statistics = item['statistics']
+                snippet = item['snippet']
+
                 # Get the shares --> uses a different API call
                 video_id = item['id']
-                publish_date = item['snippet']['publishedAt']
+                publish_date = snippet['publishedAt']
                 shares = get_shares(video_id, publish_date)
+
+                # Calculate the engagement rate
+                engagement = calc_engagement_rate(
+                    shares,
+                    int(statistics.get('commentCount', 0)),
+                    int(statistics.get('likeCount', 0)),
+                    int(statistics.get('dislikeCount', 0)),
+                    int(statistics.get('viewCount'))
+                )
 
                 # Ger remaining data and append to list
                 video_data.append({
@@ -86,6 +98,7 @@ def get_generic_info(video_ids):
                     'dislikes': int(item['statistics'].get('dislikeCount', 0)),
                     'shares': shares,
                     'comments': int(item['statistics'].get('commentCount', 0)),
+                    'engagement': engagement
                 })
         else:
             print(f'⚠️ No data found for the provided video IDs.')
@@ -97,6 +110,21 @@ def get_generic_info(video_ids):
 
     # Convert data into dataframe and return it
     return pd.DataFrame(video_data).set_index('id')
+
+
+def calc_engagement_rate(shares, comments, likes, dislikes, views):
+    """
+    Calculates the engagement rate for a video.
+
+    :param shares: Integer with the number of shares.
+    :param comments: Integer with the number of comments.
+    :param likes: Integer with the number of likes.
+    :param dislikes: Integer with the number of dislikes.
+    :param views: Integer with the number of views.
+    :return: Float with the engagement rate.
+    """
+    engagement_rate = (shares + comments + likes - dislikes) / views if views > 0 else 0
+    return round(engagement_rate*100, 2)
 
 
 def get_shares(video_id, start_date):
@@ -168,6 +196,7 @@ def get_metrics_over_time(videos):
         temp_dislikes = {}
         temp_shares = {}
         temp_comments = {}
+        temp_engagement = {}
 
         # Loop through time intervals and fetch data
         for interval, days_after in time_intervals.items():
@@ -180,6 +209,7 @@ def get_metrics_over_time(videos):
                 temp_dislikes[f'dislikes_{interval}'] = None
                 temp_shares[f'shares_{interval}'] = None
                 temp_comments[f'comments_{interval}'] = None
+                temp_engagement[f'engagement_rate_{interval}'] = None
                 continue  # Skip fetching data
 
             try:
@@ -201,6 +231,10 @@ def get_metrics_over_time(videos):
                     temp_dislikes[f'dislikes_{interval}'] = row_data[2]
                     temp_shares[f'shares_{interval}'] = row_data[3]
                     temp_comments[f'comments_{interval}'] = row_data[4]
+                    temp_engagement[f'engagement_rate_{interval}'] = calc_engagement_rate(
+                        int(row_data[3]), int(row_data[4]), int(row_data[1]), int(row_data[2]), int(row_data[0])
+                    )
+
                 else:
                     # Fill missing data with None
                     temp_views[f'views_{interval}'] = None
@@ -208,6 +242,7 @@ def get_metrics_over_time(videos):
                     temp_dislikes[f'dislikes_{interval}'] = None
                     temp_shares[f'shares_{interval}'] = None
                     temp_comments[f'comments_{interval}'] = None
+                    temp_engagement[f'engagement_rate_{interval}'] = None
 
             except Exception as e:
                 print(f'❌ Error fetching video data for video {video_id} on {analytics_date}: {e}')
@@ -218,6 +253,7 @@ def get_metrics_over_time(videos):
         video_data.update(temp_dislikes)
         video_data.update(temp_shares)
         video_data.update(temp_comments)
+        video_data.update(temp_engagement)
 
         # Append the structured data for this video
         analytics_data.append(video_data)
