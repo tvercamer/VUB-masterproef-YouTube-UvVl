@@ -58,8 +58,6 @@ def get_generic_info(video_ids):
     :param video_ids: Numpy Array with video_ids.
     :return: DataFrame that contains generic information for each video
     """
-
-    # Get data
     video_data = []
     try:
         request = ytd.videos().list(
@@ -71,15 +69,22 @@ def get_generic_info(video_ids):
         # Loop through API responses
         if 'items' in response and response['items']:
             for item in response['items']:
+                # Get the shares --> uses a different API call
+                video_id = item['id']
+                publish_date = item['snippet']['publishedAt']
+                shares = get_shares(video_id, publish_date)
+
+                # Ger remaining data and append to list
                 video_data.append({
-                    'id': item['id'],
+                    'id': video_id,
                     'title': item['snippet']['title'],
-                    'publish_date': item['snippet']['publishedAt'],
+                    'publish_date': publish_date,
                     'duration': parse_duration(item['contentDetails']['duration']),
                     # Metrics below only give the TOTAL amount on the moment of your API call
                     'views': int(item['statistics'].get('viewCount', 0)),
                     'likes': int(item['statistics'].get('likeCount', 0)),
                     'dislikes': int(item['statistics'].get('dislikeCount', 0)),
+                    'shares': shares,
                     'comments': int(item['statistics'].get('commentCount', 0)),
                 })
         else:
@@ -92,6 +97,37 @@ def get_generic_info(video_ids):
 
     # Convert data into dataframe and return it
     return pd.DataFrame(video_data).set_index('id')
+
+
+def get_shares(video_id, start_date):
+    """
+    Fetches the number of shares for a specific video using the YouTube Analytics API.
+
+    :param video_id: String with the video_id.
+    :param start_date: String with the publishing date of the video.
+    :return: Integer with the number of shares.
+    """
+    end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    start_date = start_date.split('T')[0]
+    try:
+        response = yta.reports().query(
+            ids='channel==MINE',
+            startDate=start_date,
+            endDate=end_date,
+            metrics='shares',
+            dimensions='video',
+            filters=f'video=={video_id}'
+        ).execute()
+
+        if 'rows' in response and response['rows']:
+            return int(response['rows'][0][1])
+        else:
+            print(f'⚠️ No data found for the provided video ID.')
+            return None
+
+    except Exception as e:
+        print(f'❌ Error fetching video shares: {e}')
+        return None
 
 
 def get_metrics_over_time(videos):
@@ -130,6 +166,7 @@ def get_metrics_over_time(videos):
         temp_views = {}
         temp_likes = {}
         temp_dislikes = {}
+        temp_shares = {}
         temp_comments = {}
 
         # Loop through time intervals and fetch data
@@ -141,6 +178,7 @@ def get_metrics_over_time(videos):
                 temp_views[f'views_{interval}'] = None
                 temp_likes[f'likes_{interval}'] = None
                 temp_dislikes[f'dislikes_{interval}'] = None
+                temp_shares[f'shares_{interval}'] = None
                 temp_comments[f'comments_{interval}'] = None
                 continue  # Skip fetching data
 
@@ -149,7 +187,7 @@ def get_metrics_over_time(videos):
                     ids=f"channel=={os.getenv('YT_CHANNEL_ID')}",
                     startDate=str(publish_date),
                     endDate=str(analytics_date),
-                    metrics='views,likes,dislikes,comments',
+                    metrics='views,likes,dislikes,shares,comments',
                     filters=f'video=={video_id}'
                 )
                 response = request.execute()
@@ -161,12 +199,14 @@ def get_metrics_over_time(videos):
                     temp_views[f'views_{interval}'] = row_data[0]
                     temp_likes[f'likes_{interval}'] = row_data[1]
                     temp_dislikes[f'dislikes_{interval}'] = row_data[2]
-                    temp_comments[f'comments_{interval}'] = row_data[3]
+                    temp_shares[f'shares_{interval}'] = row_data[3]
+                    temp_comments[f'comments_{interval}'] = row_data[4]
                 else:
                     # Fill missing data with None
                     temp_views[f'views_{interval}'] = None
                     temp_likes[f'likes_{interval}'] = None
                     temp_dislikes[f'dislikes_{interval}'] = None
+                    temp_shares[f'shares_{interval}'] = None
                     temp_comments[f'comments_{interval}'] = None
 
             except Exception as e:
@@ -176,6 +216,7 @@ def get_metrics_over_time(videos):
         video_data.update(temp_views)
         video_data.update(temp_likes)
         video_data.update(temp_dislikes)
+        video_data.update(temp_shares)
         video_data.update(temp_comments)
 
         # Append the structured data for this video
