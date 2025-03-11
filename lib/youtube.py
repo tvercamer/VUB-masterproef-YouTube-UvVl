@@ -53,62 +53,66 @@ ytd, yta = authenticate_youtube()
 # API requests
 def get_generic_info(video_ids):
     """
-    Fetches generic video information from YouTube Data API.
+    Fetches generic video information from the YouTube Data API in batches.
 
-    :param video_ids: Numpy Array with video_ids.
-    :return: DataFrame that contains generic information for each video
+    :param video_ids: List or NumPy array of video IDs.
+    :return: DataFrame that contains generic information for each video.
     """
     video_data = []
-    try:
-        request = ytd.videos().list(
-            part='snippet,contentDetails,statistics',
-            id=','.join(video_ids)
-        )
-        response = request.execute()
+    batch_size = 50  # API limit
 
-        # Loop through API responses
-        if 'items' in response and response['items']:
-            for item in response['items']:
-                statistics = item['statistics']
-                snippet = item['snippet']
+    # Ensure video_ids is a list of strings
+    video_ids = [str(vid) for vid in video_ids]
 
-                # Get the shares --> uses a different API call
-                video_id = item['id']
-                publish_date = snippet['publishedAt']
-                shares = get_shares(video_id, publish_date)
+    # Split video IDs into batches of 50
+    batches = [video_ids[i:i + batch_size] for i in range(0, len(video_ids), batch_size)]
 
-                # Calculate the engagement rate
-                engagement = calc_engagement_rate(
-                    shares,
-                    int(statistics.get('commentCount', 0)),
-                    int(statistics.get('likeCount', 0)),
-                    int(statistics.get('dislikeCount', 0)),
-                    int(statistics.get('viewCount'))
-                )
+    for batch in batches:
+        try:
+            request = ytd.videos().list(
+                part='snippet,contentDetails,statistics',
+                id=','.join(batch)  # Convert list to comma-separated string
+            )
+            response = request.execute()
 
-                # Ger remaining data and append to list
-                video_data.append({
-                    'id': video_id,
-                    'title': item['snippet']['title'],
-                    'publish_date': publish_date,
-                    'duration': parse_duration(item['contentDetails']['duration']),
-                    # Metrics below only give the TOTAL amount on the moment of your API call
-                    'views': int(item['statistics'].get('viewCount', 0)),
-                    'likes': int(item['statistics'].get('likeCount', 0)),
-                    'dislikes': int(item['statistics'].get('dislikeCount', 0)),
-                    'shares': shares,
-                    'comments': int(item['statistics'].get('commentCount', 0)),
-                    'engagement': engagement
-                })
-        else:
-            print(f'⚠️ No data found for the provided video IDs.')
-            return None
+            # Process API response
+            if 'items' in response and response['items']:
+                for item in response['items']:
+                    statistics = item['statistics']
+                    snippet = item['snippet']
 
-    except Exception as e:
-        print(f'❌ Error fetching video data: {e}')
-        return None
+                    # Get video ID and publish date
+                    video_id = item['id']
+                    publish_date = snippet['publishedAt']
+                    shares = get_shares(video_id, publish_date)
 
-    # Convert data into dataframe and return it
+                    # Calculate engagement rate
+                    engagement = calc_engagement_rate(
+                        shares,
+                        int(statistics.get('commentCount', 0)),
+                        int(statistics.get('likeCount', 0)),
+                        int(statistics.get('dislikeCount', 0)),
+                        int(statistics.get('viewCount', 1))  # Avoid division by zero
+                    )
+
+                    # Append to results
+                    video_data.append({
+                        'id': video_id,
+                        'title': snippet['title'],
+                        'publish_date': publish_date,
+                        'duration': parse_duration(item['contentDetails']['duration']),
+                        'views': int(statistics.get('viewCount', 0)),
+                        'likes': int(statistics.get('likeCount', 0)),
+                        'dislikes': int(statistics.get('dislikeCount', 0)),
+                        'shares': shares,
+                        'comments': int(statistics.get('commentCount', 0)),
+                        'engagement': engagement
+                    })
+
+        except Exception as e:
+            print(f'❌ Error fetching video data for batch: {batch}: {e}')
+
+    # Convert list to DataFrame
     return pd.DataFrame(video_data).set_index('id')
 
 
@@ -334,3 +338,41 @@ def get_video_comments(videos):
     # Convert to DataFrame
     df_comments = pd.DataFrame(all_comments)
     return df_comments if not df_comments.empty else None
+
+
+def get_video_ids_in_period(start_date, end_date):
+    """
+    Fetches all video IDs from your channel published within a specific time period.
+
+    :param start_date: String in 'YYYY-MM-DD' format representing the start date.
+    :param end_date: String in 'YYYY-MM-DD' format representing the end date.
+    :return: List of video IDs published within the specified period.
+    """
+    video_ids = []
+    next_page_token = None
+
+    try:
+        while True:
+            request = ytd.search().list(
+                part='id',
+                channelId=os.getenv('YT_CHANNEL_ID'),  # Ensure you have set this environment variable
+                publishedAfter=f'{start_date}T00:00:00Z',
+                publishedBefore=f'{end_date}T23:59:59Z',
+                maxResults=50,  # Adjust based on quota limits
+                type='video',
+                pageToken=next_page_token
+            )
+            response = request.execute()
+
+            if 'items' in response:
+                for item in response['items']:
+                    video_ids.append(item['id']['videoId'])
+
+            next_page_token = response.get('nextPageToken')
+            if not next_page_token:
+                break
+
+    except Exception as e:
+        print(f'❌ Error fetching video IDs: {e}')
+
+    return video_ids
