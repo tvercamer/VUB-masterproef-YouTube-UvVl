@@ -1,6 +1,8 @@
 # Import libraries
 import re
+import os
 import isodate
+import requests
 from deep_translator import GoogleTranslator
 
 
@@ -20,7 +22,7 @@ def parse_duration(duration):
         return 'N/A'
 
 
-def translate_to_english(text):
+def translate_with_google(text):
     """
     Translates a given Dutch text to English using Google Translate.
 
@@ -33,6 +35,32 @@ def translate_to_english(text):
     except Exception as e:
         print(f'❌ Translation error: {e}')
         return text  # If translation fails, return original text
+
+
+def translate_with_deepl(text):
+    """
+    Translates a given Dutch text to English using the DeepL API.
+
+    :param text: Dutch text string
+    :return: Translated English text
+    """
+    url = "https://api.deepl.com/v2/translate"
+    data = {
+        "auth_key": os.getenv("DEEPL_API_KEY") ,
+        "text": text,
+        "source_lang": "NL",
+        "target_lang": "EN"
+    }
+
+    try:
+        response = requests.post(url, data=data)
+        response.raise_for_status()  # Raises error if request failed
+        result = response.json()
+        translated_text = result['translations'][0]['text']
+        return translated_text
+    except Exception as e:
+        print(f'❌ DeepL Translation error: {e}')
+        return text  # Fallback: return original text
 
 
 def anonymize_comments(comments):

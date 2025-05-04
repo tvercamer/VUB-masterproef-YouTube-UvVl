@@ -340,39 +340,58 @@ def get_video_comments(videos):
     return df_comments if not df_comments.empty else None
 
 
+def get_all_video_ids():
+    """
+    Fetches all unique video IDs from the uploads playlist of the YouTube channel defined in .env.
+    """
+    video_ids = set()
+    next_page_token = None
+    channel_id = os.getenv('YT_CHANNEL_ID')
+
+    if not channel_id:
+        raise ValueError("❌ YT_CHANNEL_ID is not set in the .env file.")
+
+    # Step 1: Get the uploads playlist ID
+    channel_response = ytd.channels().list(
+        part='contentDetails',
+        id=channel_id
+    ).execute()
+    uploads_playlist_id = channel_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+
+    # Step 2: Loop through the uploads playlist
+    while True:
+        playlist_response = ytd.playlistItems().list(
+            part='contentDetails',
+            playlistId=uploads_playlist_id,
+            maxResults=50,
+            pageToken=next_page_token
+        ).execute()
+
+        for item in playlist_response['items']:
+            video_ids.add((
+                item['contentDetails']['videoId'],
+                item['contentDetails']['videoPublishedAt']
+            ))
+
+        next_page_token = playlist_response.get('nextPageToken')
+        if not next_page_token:
+            break
+
+    # Convert back to list of dicts
+    return [{'videoId': vid, 'publishedAt': date} for vid, date in video_ids]
+
+
 def get_video_ids_in_period(start_date, end_date):
     """
-    Fetches all video IDs from your channel published within a specific time period.
-
-    :param start_date: String in 'YYYY-MM-DD' format representing the start date.
-    :param end_date: String in 'YYYY-MM-DD' format representing the end date.
-    :return: List of video IDs published within the specified period.
+    Returns video IDs published within the specified period.
     """
-    video_ids = []
-    next_page_token = None
+    all_videos = get_all_video_ids()
+    start_dt = datetime.datetime.strptime(start_date, '%Y-%m-%d')
+    end_dt = datetime.datetime.strptime(end_date, '%Y-%m-%d')
 
-    try:
-        while True:
-            request = ytd.search().list(
-                part='id',
-                channelId=os.getenv('YT_CHANNEL_ID'),  # Ensure you have set this environment variable
-                publishedAfter=f'{start_date}T00:00:00Z',
-                publishedBefore=f'{end_date}T23:59:59Z',
-                maxResults=50,  # Adjust based on quota limits
-                type='video',
-                pageToken=next_page_token
-            )
-            response = request.execute()
+    filtered_videos = [
+        vid['videoId'] for vid in all_videos
+        if start_dt <= datetime.datetime.strptime(vid['publishedAt'], '%Y-%m-%dT%H:%M:%SZ') <= end_dt
+    ]
 
-            if 'items' in response:
-                for item in response['items']:
-                    video_ids.append(item['id']['videoId'])
-
-            next_page_token = response.get('nextPageToken')
-            if not next_page_token:
-                break
-
-    except Exception as e:
-        print(f'❌ Error fetching video IDs: {e}')
-
-    return video_ids
+    return filtered_videos
